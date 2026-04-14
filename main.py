@@ -1,11 +1,15 @@
 import json
 import os
 from gigachat import GigaChat
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ============================================
 # НАСТРОЙКИ
 # ============================================
-AUTH_KEY = "MDE5ZDhjYWItMzlmNS03ZmViLTk2YjgtNjI3NjM3Y2MzNmMzOmJlY2Y0MzExLTYxMjUtNGQ1MS1hMzM5LTk1OWVkNGVhOTNiOQ==" 
+AUTH_KEY = token = os.getenv("AUTH_KEY")
+print(f"AUTH_KEY: {AUTH_KEY}")
 
 PHOTO_PATH = r"D:\projektNeiro\NAPI\pomidornaya rassada (1).JPG"
 JSON_FILE = "tomato_analysis.json"
