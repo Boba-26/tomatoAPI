@@ -1,89 +1,96 @@
-from dataclasses import dataclass
 import json
+import base64
 import os
-import re
-from gigachat import GigaChat
-from dotenv import load_dotenv
-
-load_dotenv()
-
-AUTH_KEY = token = os.getenv("AUTH_KEY")
-
-prompt = """
-Ты — эксперт-агроном. Проанализируй фото томата.
-Верни ответ СТРОГО в формате JSON.
-{
-    "growth_stage": "название стадии",
-    "health": 0.0-1.0,
-    "disease": "название или здоров"
-}
-"""
-
+import httpx
+from dataclasses import dataclass
+from openai import OpenAI
 
 @dataclass
 class AnalyzeResult:
     growth_stage: str
     health: float
     disease: str
-    full_responce: str
+    raw_json: dict
 
-def from_file(path: str = "example.png") -> AnalyzeResult:
-    if not os.path.exists(path):
-        raise FileNotFoundError(path)
-    with open(path, "rb") as f:
-        image_data = f.read()
-        return analyze_tomato_gigachat(image_data) 
-
-def analyze_tomato_gigachat(image_data: bytes) -> AnalyzeResult:
-    with GigaChat(credentials=AUTH_KEY, verify_ssl_certs=False) as giga:
-        uploaded_file = giga.upload_file(("image.jpg", image_data))
-            
-        if hasattr(uploaded_file, 'model_dump'):
-            file_info = uploaded_file.model_dump()
-        else:
-            file_info = uploaded_file.__dict__
-            
-        fid = file_info.get('id_') or file_info.get('id') or file_info.get('file_id')
-            
-        if not fid:
-            raise AttributeError(f"ID файла не найден: {file_info}")
-    
-        response = giga.chat({
-            "model": "GigaChat-Max", 
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt,
-                    "attachments": [fid]
-                }
-            ]
-        })
-        
-        raw_content = response.choices[0].message.content.strip()
-        
-        # Чистим JSON
-        clean_json_str = raw_content.replace("```json", "").replace("```", "").strip()
-        start = clean_json_str.find('{')
-        end = clean_json_str.rfind('}') + 1
-        
-        if start == -1:
-            raise RuntimeError("Нейросеть ответила текстом")
-
-        json_data = json.loads(clean_json_str[start:end])
-        return AnalyzeResult(
-            growth_stage=json_data.get('growth_stage'),
-            health=float(json_data.get('health')),
-            disease=json_data.get('disease'),
-            full_responce=raw_content
+class TomatoAnalyzer:
+    def __init__(self, base_url="http://127.0.0.1:8080/v1"):
+        # Используем увеличенный таймаут, так как обработка фото на локальной GPU 
+        # может занимать от 5 до 20 секунд
+        self.client = OpenAI(
+            base_url=base_url, 
+            api_key="sk-no-key-required",
+            timeout=httpx.Timeout(120.0) 
         )
 
+    def _encode_image(self, image_path):
+        """Превращает картинку в строку base64"""
+        with open(image_path, "rb") as image_file:
+            return base64.b64encode(image_file.read()).decode('utf-8')
+
+    def analyze(self, image_path: str) -> AnalyzeResult:
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Файл не найден: {image_path}")
+
+        print(f"📸 Кодирование изображения...")
+        base64_image = self._encode_image(image_path)
+
+        prompt = (
+            "Ты — эксперт-агроном. Проанализируй фото томата. "
+            "Верни СТРОГИЙ JSON: "
+            '{"growth_stage": "стадия", "health": 0.0-1.0, "disease": "название или healthy"}'
+        )
+
+        print(f"🧠 Отправка запроса на локальный сервер (Gemma 4)...")
+        try:
+            response = self.client.chat.completions.create(
+                model="local-model",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                            },
+                        ],
+                    }
+                ],
+                response_format={"type": "json_object"},
+                temperature=0
+            )
+
+            content = response.choices[0].message.content
+            data = json.loads(content)
+
+            return AnalyzeResult(
+                growth_stage=data.get("growth_stage", "Не определено"),
+                health=float(data.get("health", 0.0)),
+                disease=data.get("disease", "Здоров/Нет данных"),
+                raw_json=data
+            )
+
+        except Exception as e:
+            print(f"❌ Ошибка: {e}")
+            if "503" in str(e):
+                print("💡 Совет: Проверьте, что сервер запущен с флагом '-c 2048'")
+            raise
+
 if __name__ == "__main__":
-    result = from_file()
+    # Убедитесь, что файл example.png лежит в той же папке
+    IMAGE_PATH = "pomidornaya rassada (1).JPG" 
     
-    print("📊 РЕЗУЛЬТАТЫ:")
-    print(f"🌱 Стадия:   {result.growth_stage}")
-    print(f"💚 Здоровье: {int(result.health * 100)}%")
-    print(f"🦠 Диагноз:  {result.disease}")
-    print(f"\nПолный ответ: {result.full_responce}")
-
-
+    analyzer = TomatoAnalyzer()
+    
+    try:
+        result = analyzer.analyze(IMAGE_PATH)
+        
+        print("\n" + "="*30)
+        print("🍅 РЕЗУЛЬТАТ АНАЛИЗА NAPI:")
+        print(f"Стадия:    {result.growth_stage}")
+        print(f"Здоровье:  {int(result.health * 100)}%")
+        print(f"Болезни:   {result.disease}")
+        print("="*30)
+        
+    except Exception as e:
+        print(f"\nЗавершение с ошибкой.")
