@@ -1,1 +1,1 @@
-llama-server.exe -hf ggml-org/gemma-4-E2B-it-GGUF -ngl 99 -c 2048 -np 1
+llama-server.exe -hf ggml-org/gemma-4-E2B-it-GGUF -ngl 99 -c 2048 -t 2
